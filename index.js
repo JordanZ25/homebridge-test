@@ -1,73 +1,65 @@
-const Service, Characteristic;
+var Service, Characteristic;
+const axios = require('axios');
 
-module.exports = function (homebridge) {
+
+module.exports = function(homebridge) {
   Service = homebridge.hap.Service;
   Characteristic = homebridge.hap.Characteristic;
-  homebridge.registerAccessory("switch-plugin", "MyAwesomeSwitch", mySwitch);
-};
-
-mySwitch.prototype = {
-  getServices: function () {
-    let informationService = new Service.AccessoryInformation();
-    informationService
-      .setCharacteristic(Characteristic.Manufacturer, "My switch manufacturer")
-      .setCharacteristic(Characteristic.Model, "My switch model")
-      .setCharacteristic(Characteristic.SerialNumber, "123-456-789");
-
-    let switchService = new Service.Switch("My switch");
-    switchService
-      .getCharacteristic(Characteristic.On)
-        .on('get', this.getSwitchOnCharacteristic.bind(this))
-        .on('set', this.setSwitchOnCharacteristic.bind(this));
-
-    this.informationService = informationService;
-    this.switchService = switchService;
-    return [informationService, switchService];
-  }
-};
-
-const request = require('request');
-const url = require('url');
-
-function mySwitch(log, config) {
-  this.log = log;
-  this.getUrl = url.parse(config['getUrl']);
-  this.postUrl = url.parse(config['postUrl']);
+  homebridge.registerAccessory("homebridge-mclimate-smartplug", "MClimate-SmartPlug", SmartPlugAccessory);
 }
 
-mySwitch.prototype = {
+function SmartPlugAccessory(log, config) {
+  this.log = log;
+  this.name = config["name"];
+  this.plugName = config["plug_name"] || this.name; // fallback to "name" if you didn't specify an exact "bulb_name"
+  this.binaryState = 0; // bulb state, default is OFF
+  this.log("Starting a smart plug device with name '" + this.plugName + "'...");
+}
 
-  getSwitchOnCharacteristic: function (next) {
-    const me = this;
-    request({
-        url: me.getUrl,
-        method: 'GET',
-    },
-    function (error, response, body) {
-      if (error) {
-        me.log('STATUS: ' + response.statusCode);
-        me.log(error.message);
-        return next(error);
-      }
-      return next(null, body.currentState);
-    });
-  },
+SmartPlugAccessory.prototype.getPowerOn = function(callback) {
+  var powerOn = this.binaryState > 0;
+  this.log("Power state for the '%s' is %s", this.plugName, this.binaryState);
+  callback(null, powerOn);
 
-  setSwitchOnCharacteristic: function (on, next) {
-    const me = this;
-    request({
-      url: me.postUrl,
-      body: {'targetState': on},
-      method: 'POST',
-      headers: {'Content-type': 'application/json'}
-    },
-    function (error, response) {
-      if (error) {
-        me.log('STATUS: ' + response.statusCode);
-        me.log(error.message);
-        return next(error);
-      }
-      return next();
-    });
-  }
-};
+
+
+  
+}
+
+SmartPlugAccessory.prototype.setPowerOn = function(powerOn, callback,config) {
+  this.binaryState = powerOn ? 'on' : 'off'; 
+  callback(null);
+
+
+
+     axios({
+
+        method: 'post',
+        url: 'https://developer-api.seemelissa.com/v1/provider/send',
+        data:{
+            serial_number: config['serial_number'],
+            command: "switch_on_off",
+            state: this.binaryState
+        },
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + config['access_token']
+        }
+
+    }).then(function(response) {
+      
+      this.log("Set power state on the '%s' to %s", this.plugName, this.binaryState);
+
+    })
+}
+
+SmartPlugAccessory.prototype.getServices = function() {
+    var smartPlugService = new Service.Outlet(this.name);
+    
+    smartPlugService
+      .getCharacteristic(Characteristic.On)
+      .on('get', this.getPowerOn.bind(this))
+      .on('set', this.setPowerOn.bind(this));
+    
+    return [smartPlugService];
+}
